@@ -70,14 +70,13 @@ def get_servers(nodes) -> list[str]:
     with is_valid_server(). Returns a sorted list of the cleaned addresses if
     every node is valid, or None if any entry fails validation.
     """
-    servers = sorted(
-        s 
-        for server in nodes 
-        if (s := server.strip().lower()) and is_valid_server(s)  # normalise then validate
-    )
+
+    n = " ".join(nodes).strip().split(",")
+    servers = sorted([server.strip().lower() for server in n])
+    valid_servers = [server for server in servers if is_valid_server(server)]
 
     # If any node was invalid it would have been filtered out, making lengths differ
-    if len(servers) < len(nodes):
+    if len(servers) > len(valid_servers):
         return None
     return servers
 

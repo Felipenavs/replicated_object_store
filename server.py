@@ -3,7 +3,6 @@ import utils
 import grpc
 import objectstore_pb2 as pb
 import objectstore_pb2_grpc as pb_grpc
-from google.protobuf import empty_pb2
 from service import ObjectStoreServicer
 
 def main() -> None:

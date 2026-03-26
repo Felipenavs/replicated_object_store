@@ -5,7 +5,7 @@ import objectstore_pb2_grpc as pb_grpc
 from google.protobuf import empty_pb2
 from collections import deque 
 import argparse
-from google.protobuf.json_format import MessageToDict
+import shlex
 
 
 def cli_argparse() -> list[str]:
@@ -35,7 +35,6 @@ def run():
 
     while True:
 
-
         try:
             line = input("> ")
         except EOFError:
@@ -44,51 +43,58 @@ def run():
         if not line:
             continue
 
-        command, *obj = line.strip().split(" ")
+        # command, *obj = line.strip().split(" ")
+        # command = command.lower()
+
+        parts = shlex.split(line)
+        command, *obj = parts
         command = command.lower()
+
         match command:
+
             #Put
-            case "1" | "put":
+            case "put":
 
                 #no key or value provided
                 if len(obj) < 2:
                     print("Error: Invalid number of arguments. Put command requires: Put <key> <value>")
                     continue
-                
-                key, *value = obj
-                value = utils.parse_value(value) 
 
+                key = obj[0]
+                value = " ".join(obj[1:])  
                 try:
-                    response = primary_stub.Put(pb.PutRequest(key=key, value=value.encode('utf-8')))
+                    response = primary_stub.Put(pb.PutRequest(key=key, value=value.encode('utf-8')), timeout=2.0)
                     print(f"Success: Saved object with key: {key} and value: {value}")
                 except grpc.RpcError as e:
                     print(f"Error: {e.code().name}. {e.details()}") 
+                    
 
             #Get
-            case "2" | "get":
+            case "get":
 
                 if(len(obj) < 1):
                     print("Error: Invalid number of arguments. Get command requires: Get <key>")
                     continue
 
-                key,*_ = obj
+                key = obj[0]
+                value = " ".join(obj[1:])
                 stub = utils.next_read_stub(stubs)
                 try:
-                    response = stub.Get(pb.GetRequest(key=key))
+                    response = stub.Get(pb.GetRequest(key=key), timeout=2.0)
                     print(f"Success: value = {response.value.decode("utf-8")}")
                 except grpc.RpcError as e:
                     print(f"Error: {e.code().name}. {e.details()}")
 
             #Update
-            case "3" | "update":
+            case "update":
 
                 #no key or value provided
                 if len(obj) < 2:
                     print("Error: Invalid number of arguments. Put command requires: Put <key> <value>")
                     continue
 
-                key, *value = obj
-                value = utils.parse_value(value) 
+                key = obj[0]
+                value = " ".join(obj[1:])
                 try:
                     response = primary_stub.Update(pb.UpdateRequest(key=key, value=value.encode('utf-8')))
                     print(f"Success: Updated object with key: {key} to value: {value}")
@@ -96,38 +102,52 @@ def run():
                     print(f"Error: {e.code().name}. {e.details()}")
 
             #Delete
-            case "4" | "delete":
+            case "delete":
 
                 if(len(obj) < 1):
                     print("Error: Invalid number of arguments. Get command requires: Get <key>")
                     continue
-                key,*_ = obj
+
+                key = obj[0]
+                value = " ".join(obj[1:])
                 try:
-                    response = primary_stub.Delete(pb.DeleteRequest(key=key))
+                    response = primary_stub.Delete(pb.DeleteRequest(key=key), timeout=2.0)
                     print(f"Success: Deleted key {key}")         
                 except grpc.RpcError as e:
                     print(f"Error: {e.code().name}. {e.details()}")
 
             #List
-            case "5" | "list":
+            case "list":
                 stub = utils.next_read_stub(stubs)
-                response = stub.List(empty_pb2.Empty())
-                print("Success: OK")
-                print(MessageToDict(response))
+                try:
+                    response = stub.List(empty_pb2.Empty(), timeout=2.0)
+                    print("Success: OK")
+                    print(response)
+                except grpc.RpcError as e:
+                    print(f"Error: {e.code().name}. {e.details()}")
+                
             
             #Stats
-            case "6" | "stats":
-                response = primary_stub.Stats(empty_pb2.Empty())
-                print("Success: OK")
-                print(MessageToDict(response))
-
+            case "stats":
+                
+                stub = utils.next_read_stub(stubs)
+                try:   
+                    response= stub.Stats(empty_pb2.Empty(), timeout=2.0)
+                    print("Success: OK")
+                    print(response)
+                except grpc.RpcError as e:
+                    print(f"Error: {e.code().name}. {e.details()}")
+                
             #Reset
-            case "7" | "reset":
-                response = primary_stub.Reset(empty_pb2.Empty())
-                print("Success: OK")
-
+            case "reset":
+                try:
+                    response = primary_stub.Reset(empty_pb2.Empty(), timeout=2.0)
+                    print("Success: OK")        
+                except grpc.RpcError as e:
+                    print(f"Error: {e.code().name}. {e.details()}")
+                
             #Exit
-            case "8" | "exit" | "quit" | "q":
+            case "exit" | "quit" | "q":
                 break
             
             #Invalid
