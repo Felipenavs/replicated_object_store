@@ -38,14 +38,7 @@ class ObjectStoreServicer(pb_grpc.ObjectStoreServicer):
 
 
     def fan_out(self, op_type, key="", value=b"", timeout=2.0) -> int:
-        """
-        Send ApplyWrite to replicas concurrently and stop waiting as soon as:
-        1. majority is reached, or
-        2. majority becomes impossible
 
-        Returns:
-            int: number of successful replica acknowledgments received so far
-        """
         write_op = pb.WriteOp(
             type=op_type,
             key=key,
@@ -186,12 +179,13 @@ class ObjectStoreServicer(pb_grpc.ObjectStoreServicer):
             return empty_pb2.Empty()
         
         #get writer lock
-        with self.rlock:
+        with self.wlock:
             # Check if key exists
             if request.key not in self.store.keys():
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details('Error: Key not found')
                 return empty_pb2.Empty()
+            self.store.pop(request.key, None)
 
         majority = (len(self.cluster) +2)//2
         n=1
@@ -201,8 +195,6 @@ class ObjectStoreServicer(pb_grpc.ObjectStoreServicer):
 
         if n >= majority:
             #get stats lock to update stats
-            with self.wlock:
-                self.store.pop(request.key, None)
             with self.stats_lock:
                 self.deletes += 1
             return empty_pb2.Empty()
@@ -234,20 +226,14 @@ class ObjectStoreServicer(pb_grpc.ObjectStoreServicer):
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details('Error: Key not found')
                 return empty_pb2.Empty()
+            self.store[request.key] = request.value
                 
-            
-        
         majority = (len(self.cluster) +2)//2
         n=1
         if len(self.cluster) >0:
             n = self.fan_out(pb.UPDATE, request.key, request.value)
 
         if n >= majority:
-            with self.wlock:
-                # Check if key already exists
-                if request.key in self.store:
-                    self.store[request.key] = request.value
-
             #get stats lock to update stats
             with self.stats_lock:
                 self.updates += 1
