@@ -260,7 +260,6 @@ class ObjectStoreHandler(BaseHTTPRequestHandler):
         On success, send HTTP 200 with body b"OK".
         On error, call self._send_grpc_error(e).
         """
-        
         value = self._read_body()
         try:
             self.server.primary_stub.Update(pb.UpdateRequest(key=key, value=value))
