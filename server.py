@@ -15,7 +15,7 @@ def main() -> None:
         print("Error: Invalid --cluster argument. Each server must be in the format <host>:<port>")
         return
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=32))
     pb_grpc.add_ObjectStoreServicer_to_server(ObjectStoreServicer(self_node, nodes), server)
     server.add_insecure_port(args.listen)
     print(f"Server listening on {args.listen}")
