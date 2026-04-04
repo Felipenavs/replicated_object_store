@@ -1,8 +1,8 @@
 import argparse
 import json
 import random
-import time
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +38,13 @@ def parse_args():
     return p.parse_args()
 
 
+def write_result(path, result):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(result, f)
+
+
 def main():
     args = parse_args()
 
@@ -48,6 +55,7 @@ def main():
     payload = make_payload()
 
     channel = grpc.insecure_channel(args.target)
+    grpc.channel_ready_future(channel).result(timeout=5)
     stub = pb_grpc.ObjectStoreStub(channel)
 
     rng = random.Random(args.worker_id)
@@ -64,9 +72,9 @@ def main():
                 key = f"{args.key_prefix}-w{args.worker_id}-{put_counter}"
                 stub.Put(pb.PutRequest(key=key, value=payload), timeout=5.0)
                 put_counter += 1
-
-            elif args.op == "get":
-                # choose from preloaded keys
+            else:
+                if args.get_key_count <= 0:
+                    raise ValueError("--get-key-count must be > 0 for get workloads")
                 idx = rng.randrange(args.get_key_count)
                 key = f"{args.key_prefix}-pre-{idx}"
                 stub.Get(pb.GetRequest(key=key), timeout=5.0)
@@ -75,10 +83,65 @@ def main():
             latencies_ms.append(dt_ms)
             success += 1
 
-        except grpc.RpcError:
+        except grpc.RpcError as e:
             errors += 1
-        except Exception:
+            elapsed = time.perf_counter() - start
+
+            print(
+                f"[worker {args.worker_id}] FAIL FAST: grpc error "
+                f"code={e.code()} details={e.details()}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            latencies_ms.sort()
+            result = {
+                "worker_id": args.worker_id,
+                "op": args.op,
+                "target": args.target,
+                "elapsed_sec": elapsed,
+                "success": success,
+                "errors": errors,
+                "p50_ms": percentile(latencies_ms, 0.50),
+                "p95_ms": percentile(latencies_ms, 0.95),
+                "p99_ms": percentile(latencies_ms, 0.99),
+                "latencies_ms": latencies_ms,
+                "failed": True,
+                "error_type": "grpc",
+                "error_code": str(e.code()),
+                "error_details": e.details(),
+            }
+            write_result(args.out, result)
+            sys.exit(1)
+
+        except Exception as e:
             errors += 1
+            elapsed = time.perf_counter() - start
+
+            print(
+                f"[worker {args.worker_id}] FAIL FAST: {type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            latencies_ms.sort()
+            result = {
+                "worker_id": args.worker_id,
+                "op": args.op,
+                "target": args.target,
+                "elapsed_sec": elapsed,
+                "success": success,
+                "errors": errors,
+                "p50_ms": percentile(latencies_ms, 0.50),
+                "p95_ms": percentile(latencies_ms, 0.95),
+                "p99_ms": percentile(latencies_ms, 0.99),
+                "latencies_ms": latencies_ms,
+                "failed": True,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            }
+            write_result(args.out, result)
+            sys.exit(1)
 
     elapsed = time.perf_counter() - start
     latencies_ms.sort()
@@ -94,10 +157,10 @@ def main():
         "p95_ms": percentile(latencies_ms, 0.95),
         "p99_ms": percentile(latencies_ms, 0.99),
         "latencies_ms": latencies_ms,
+        "failed": False,
     }
 
-    with open(args.out, "w") as f:
-        json.dump(result, f)
+    write_result(args.out, result)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,9 @@
 import argparse
 import json
-import math
-import os
 import shutil
 import subprocess
-from pathlib import Path
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -13,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 BASE_DIR = Path(__file__).resolve().parent
 WORKER = BASE_DIR / "bench_worker.py"
+
 
 def percentile(sorted_vals, p):
     if not sorted_vals:
@@ -33,6 +32,20 @@ def parse_args():
     return p.parse_args()
 
 
+def terminate_all(proc_entries):
+    for entry in proc_entries:
+        proc = entry["proc"]
+        if proc.poll() is None:
+            proc.terminate()
+
+    time.sleep(1)
+
+    for entry in proc_entries:
+        proc = entry["proc"]
+        if proc.poll() is None:
+            proc.kill()
+
+
 def main():
     args = parse_args()
     results_dir = Path(args.results_dir)
@@ -42,6 +55,12 @@ def main():
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
+
+    print(
+        f"[launcher] starting run: op={args.op}, clients={args.clients}, "
+        f"target={args.target}, duration={args.duration}s",
+        flush=True,
+    )
 
     procs = []
     for worker_id in range(args.clients):
@@ -60,21 +79,55 @@ def main():
         if args.op == "get":
             cmd += ["--get-key-count", str(args.get_key_count)]
 
-        procs.append(subprocess.Popen(cmd))
+        proc = subprocess.Popen(cmd)
+        procs.append({
+            "worker_id": worker_id,
+            "proc": proc,
+            "out_file": out_file,
+        })
 
-    for p in procs:
-        rc = p.wait()
-        if rc != 0:
-            raise RuntimeError(f"Worker exited with code {rc}")
+    while True:
+        all_done = True
+
+        for entry in procs:
+            rc = entry["proc"].poll()
+
+            if rc is None:
+                all_done = False
+                continue
+
+            if rc != 0:
+                worker_id = entry["worker_id"]
+                print(
+                    f"[launcher] FAIL FAST: worker {worker_id} exited with code {rc}. "
+                    f"Stopping benchmark.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                terminate_all(procs)
+                raise RuntimeError(f"Worker {worker_id} exited with code {rc}")
+
+        if all_done:
+            break
+
+        time.sleep(0.2)
 
     total_success = 0
     total_errors = 0
     all_latencies = []
     elapsed_values = []
 
-    for path in run_dir.glob("worker_*.json"):
+    for path in sorted(run_dir.glob("worker_*.json")):
         with open(path) as f:
             data = json.load(f)
+
+        if data.get("failed"):
+            raise RuntimeError(
+                f"Worker {data.get('worker_id')} failed: "
+                f"{data.get('error_type')} "
+                f"{data.get('error_code', data.get('error_message', ''))}"
+            )
+
         total_success += data["success"]
         total_errors += data["errors"]
         elapsed_values.append(data["elapsed_sec"])
@@ -100,6 +153,7 @@ def main():
     with open(run_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
+    print(f"[launcher] completed run: op={args.op}, clients={args.clients}", flush=True)
     print(json.dumps(summary, indent=2))
 
 
